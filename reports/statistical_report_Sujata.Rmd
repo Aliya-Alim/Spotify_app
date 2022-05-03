@@ -1,0 +1,313 @@
+---
+title: "Statistical Data Analysis Report"
+author: "Sujata Biradar"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE )
+```
+
+```{r packages, echo = FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(corrplot)
+library(gridExtra)
+library(grid)
+library(broom)
+library(leaps)
+```
+
+```{r data}
+tracks <- read_csv("../output/tracks.csv")
+artists <- read_csv("../output/artists.csv")
+
+```
+
+
+```{r}
+tracks <- tracks %>%
+  mutate(duration_s = dmilliseconds(duration_ms))
+tracks_artists <- tracks %>%
+  inner_join(artists, by = 'artist_id')
+```
+
+<center>
+
+![](spotify.png)
+
+</center>
+
+# Introduction
+
+Music is one special language that connects us all together and it has always been a major part of all our lives. We listen to music ALL the time; during our commute, at work, and with friends. Spotify being the biggest streaming platform lists over 50 million songs, as well as over 700,000 podcast titles. For every track on their platform, Spotify provides data for thirteen Audio Features. The motivation of this report is to discover patterns and insights about the music that listeners listen to. In doing so, we can get a better understanding of musical  behaviors when we listen to songs on Spotify.
+
+Let's take a look at the audio features provided by Spotify and how they are read!
+
+- `Danceability`: Describes how suitable a track is for dancing, 0.0 is least danceable and 1.0 is most danceable.
+- `Energy`: is a measure from 0.0 to 1.0 and represents a perceptual measure of intensity and activity.
+- `Speachiness`: detects the presence of spoken words in a track. Values above 0.66 describe tracks that are probably made entirely of spoken words.
+- `Acousticness`: A confidence measure from 0.0 to 1.0 of whether the track is acoustic
+- `Liveness`:  Higher liveness values represent an increased probability that the track was performed live.
+- `Valence`: A measure from 0.0 to 1.0 describing the musical positiveness conveyed by a track. Tracks with high valence sound more positive (e.g. happy, cheerful, euphoric).
+- `Key`: The estimated overall key of the track. Integers map to pitches using standard Pitch Class notation . E.g. 0 = C, 1 = C♯/D♭, 2 = D, and so on.
+- `Mode`: Indicates the modality (major or minor) of a track, the type of scale from which its melodic content is derived. Major is represented by 1 and minor is 0.
+- `Duration`:The duration of the track in milliseconds- transformed later to seconds
+- `Time Signature`: An estimated overall time signature of a track. The time signature (meter) is a notational convention to specify how many beats are in each bar (or measure).
+
+# Exploratory Data Analysis
+
+As a part of initial data exploration, first I looked at the correlation of all the audio features and track popularity as a starting point. This helped me understand few interesting associations at a glance. 
+
+```{r}
+
+track_corr <- tracks %>%
+  select(-track_id, -track_name, -release_year, -mode, -key, -time_signature, -artist_id, -duration_ms) %>%
+  cor()
+
+corrplot(track_corr, method="color", type = "upper", tl.col="black",tl.srt=40, addCoef.col = "gray8", diag = T, number.cex = 0.65)
+
+```
+
+
+If you look at the correlation plot, you will notice that we don't have many audio features strongly correlated with track popularity. This was quite obvious considering the wide range of music we have. However, danceability shows a positive association with track popularity and instrumentalness shows a negative correlation with the popularity. 
+
+```{r tracks summary}
+tracks %>%
+  select(-track_id, -track_name, -release_year, -mode, -key, -artist_id, -duration_ms) %>%
+  summary()
+```
+
+Based on the summary statistics of the tracks, almost all the songs seem to have a common Time-Signature of 4/4. Hence, this parameter was dropped from the analysis. Most of the songs seem to have a value close to or equal to 0 for Instrumentalness. Since we saw the negative correlation in popularity of a song and instrumentalness, I decided to keep this. Energy and loudness seem highly proportional.
+
+```{r}
+valence_geom <- function(x, y, data) {
+  ggplot(data, aes(x, y)) +
+  geom_jitter(size = 0.01, color = 'pink') +
+  geom_smooth(method = 'lm', color = 'grey', size= 1, alpha = 0.5)
+}
+
+valence_loudness <- valence_geom(x = tracks_artists$valence, y = tracks_artists$loudness, data = tracks_artists) + labs(x = 'Valence', y = 'Loudness')
+
+
+valence_energy <- valence_geom(x = tracks_artists$valence, y = tracks_artists$energy, data = tracks_artists) + labs(x = 'Valence', y = 'Energy')
+
+valence_danceability <- valence_geom(x = tracks_artists$valence, y = tracks_artists$danceability, data = tracks_artists) + labs(x = 'Valence', y = 'Danceability')
+
+grid.arrange(valence_loudness, valence_energy, valence_danceability, nrow = 3)
+```
+
+Considering the summary statistics, explored relationship of Valence with danceability, energy and loudness. Valence seems to be proportional to all of them.Which means more the tracks are energetic, loud and danceable more they are positive and mood uplifting. This is a quite obvious yet interesting insight.
+
+From the definitions of the parameters in the API guide, Tempo and loudness seem to be low-level parameters which are used to calculate other higher level parameters like valence, energy, and danceability. Hence I discounted tempo and loudness from the next steps for the sake of reducing similar parameters.
+
+Based on the observations above, I am interested in finding what all audio features make up to a positive and uplifting song. Also, can we find the secret ingredients to the most popular songs.
+
+# Statistical Analysis
+
+I wanted to know if happy, cheerful songs are preferred for dances and being a high valence makes a track more popular? These findings seem intuitive however, if we can back them with statistical analysis we will be sure about it.
+
+Question 1: Is there significant mean difference in danceability, track popularity between the tracks with high valence and low valence?
+
+Before conducting a t-test to answer above question I checked for normality of these audio features which showed some correlation with Valence. Valence is divided into two groups such as high valence and low valence on the basis of it's mean value of 0.46.
+
+```{r}
+tracks_artists <- tracks_artists %>% 
+  drop_na() %>%
+  mutate(valence_group = (case_when(
+    ((valence > 0.46) & (valence < 1)) ~ "high",
+    ((valence >= 0) & (valence < 0.46))~ "low")))
+
+high_valence <- tracks_artists %>%
+                            filter(valence_group == "high")
+  
+low_valence <- tracks_artists %>%
+                             filter(valence_group == "low")
+    
+table(tracks_artists$valence_group)
+```
+
+```{r}
+tracks_artists %>%
+  drop_na() %>%
+ggplot(mapping = aes(x = danceability)) +
+    geom_histogram(aes(fill = valence_group), bins = 20) +
+    facet_wrap(~ valence_group)
+
+```
+
+```{r}
+tracks_artists %>%
+  drop_na() %>%
+ggplot(mapping = aes(x = track_popularity)) +
+    geom_histogram(aes(fill = valence_group), bins = 20) +
+    facet_wrap(~ valence_group)
+
+```
+
+Since we see that danceability, track popularty seem to have a pretty normal distribution. Let's conduct a hypothesis test to find out the mean difference between these audio features in valence groups grouped as high and low:
+
+Null Hypothesis: There is mean difference in danceability, track popularity of tracks and when valence is high and when valence is low.
+Alternative Hypothesis: There is not a mean difference in danceability, track popularity of tracksand when valence is high and when valence is low.
+
+
+```{r}
+t.test(high_valence$danceability, low_valence$danceability, alternative = "two.sided") %>%
+tidy() -> tout1
+c('p-value' = tout1$p.value, low = tout1$conf.low, high = tout1$conf.high)
+```
+
+```{r}
+t.test(high_valence$track_popularity, low_valence$track_popularity, alternative = "two.sided") %>%
+tidy() -> tout2
+c('p-value' = tout2$p.value, low = tout2$conf.low, high = tout2$conf.high)
+```
+
+Based on the t test results above, p value is less than 0.001, so we do not have enough evidence to accept the null hypothesis.So we can state that there is mean difference in danceability, popularity of tracks when valence is high and when valence is low. Having high valence in a track increaces the danceability by 0.69 meaning people prefer to dance to happy, cheerful songs and being a high valence track or a more positive, mood uplifting song makes that track more popular by 2.04.
+
+Similarly, it would be interesting to know if a cheerful song has more lyrics or a sad/depressing song tends to be having more speechiness. 
+
+Question 2: Is there significant mean difference in speechiness with high valence tracks and low valence tracks?
+
+Let's conduct a t-test for this.
+
+Null Hypothesis: There is mean difference in speechiness and when tracks have high valence as opposed to low valence.
+Alternative Hypothesis: There is not a mean difference in speechiness and when tracks have high valence as opposed to low valence.
+
+
+```{r}
+tracks_artists %>%
+  drop_na() %>%
+ggplot(mapping = aes(x = speechiness)) +
+    geom_histogram(aes(fill = valence_group), bins = 20) +
+    facet_wrap(~ valence_group)
+
+```
+
+Looking at the distribution of speeciness, we can tell that both high valence and low valence songs tend to have a similar distribution. 
+
+```{r}
+t.test(high_valence$speechiness, low_valence$speechiness, alternative = "two.sided") %>%
+tidy() -> tout5
+c('p-value' = tout5$p.value, low = tout5$conf.low, high = tout5$conf.high)
+```
+
+
+Based on the t test result above, p value is greater than 0.05, so we have enough evidence to accept the null hypothesis. So we can state that there is no mean difference in speechiness of tracks when valence is high as opposed to when valence is low. This is an intereseting insight taht artists don't discriminate in the speechiness while creating a track! We can't really tell if a happy or a sad song would have more or less lyrics.
+
+
+# Regression Model:
+
+Acousticness is an estimation of how acoustic a particular song is. High ‘acousticness' consist mostly of natural acoustic sounds (e.g. acoustic guitar, piano, orchestra, the unprocessed human voice) Low ‘acousticness’ consists of mostly electric sounds (e.g. electric guitars, synthesizers, drum machines, auto-tuned vocals and so on). Dance music is normally highly processed. Pop, rap and hip-hop songs are not necessarily acoustic. How does acousticness affect a song’s popularity? Let's see.
+
+```{r}
+  ggplot(aes(tracks_artists$acousticness, tracks_artists$track_popularity), data = tracks_artists) +
+  geom_jitter(size = 0.01, color = 'pink') +
+  geom_smooth(method = 'lm', color = 'grey', size= 1, alpha = 0.5)
+
+```
+
+Accousticness is negatively correlated with track popularity. We checked this with a linear regression track popularity being response variable and accousticness being the only predictor.
+
+H0: There’s no significant correlation between the popularity and the acousticness.
+
+H1: there is some correlation between the popularity and the acousticness.
+
+
+```{r}
+lm.df <- lm(formula = track_popularity ~ acousticness, data = tracks_artists)
+summary(lm.df)
+```
+
+From the summary of the regression we can tell that with coefficient of -4.50, with every unit increase in accousticness, track popularity will decrease in by 4.5 units. However, the R-squared value for this model is really low hence we can not reply on this one.
+
+Let's move on to another audio feature danceability, as dance music is quite popular I want to test the correlation between these two. Daceability is pretty self-explanatory, it describes how suitable a track is for dancing based on a combination of musical elements including tempo, rhythm stability, beat strength, and overall regularity. A value of 0.0 is least danceable and 1.0 is most danceable. 
+
+```{r}
+ ggplot(aes(tracks_artists$track_popularity, tracks_artists$danceability), data = tracks_artists) +
+  geom_jitter(size = 0.01, color = 'pink') +
+  geom_smooth(method = 'lm', color = 'grey', size= 1, alpha = 0.5)
+```
+
+There is positive correlation between thh danceability and popularity.
+H0: There’s no significant correlation between the popularity and the danceability;
+H1: there is some correlation between the popularity and the danceability
+
+```{r}
+lm.df2 <- lm(track_popularity ~ danceability, data = tracks_artists)
+summary(lm.df2)
+
+```
+
+From the summary we see that the coefficient is 15.2531, meaning that for every unit of increase of danceability, the popularity of a song will increase by 15.2531 units.
+
+Similarly we can check for all the audio features and use step-wise feature selection method to see which features are most correlated with popularity of the song.
+
+Creating a multiple linear regression model with track_popularity value as the response variable and danceability, energy, key, loudness, mode, speechiness, acousticness, instrumentalness, liveness, valence, tempo and duration_ms as the covariates.
+
+```{r}
+model_1 <- lm(track_popularity ~ danceability + energy + key + loudness + mode + speechiness + acousticness + instrumentalness + liveness + valence + tempo + duration_ms, 
+              data = tracks_artists)
+
+summary(model_1)
+```
+
+It can be noticed that all the covariates in the model are significant expect key since the p-value for each of them is less than 0.56. Besides, the Adjusted R- squared values is 0.09999 which is moderate. p-value of the model is < 2.2e-16 suggesting all the results are significant.
+
+To choose a subset of the predictors let's take a variable section approach. However, We are performing variable selection process to identify the significant covariates.
+
+```{r}
+
+model_2 <- regsubsets(track_popularity ~ danceability + energy + key + loudness + mode + speechiness + acousticness + instrumentalness + liveness + valence + tempo + duration_ms, 
+             data = tracks_artists,
+             nbest = 7)
+
+plot(model_2, scale = "bic")
+```
+
+According to best subset selection, the influence of ‘Energy’ > ‘Loudness’.
+
+Upon comparing both these results we can arrive at the conclusion that 1 1 0 1 1 1 1 1 1 1 1 1 is the best linear regression model for this dataset or in other words, all variables except ‘key’ are statiscally significant in predicting the track popularity.
+
+```{r}
+model_3 <- lm(track_popularity ~ danceability + energy + loudness + mode + speechiness + acousticness + instrumentalness + liveness + valence + tempo + duration_ms, 
+             data = tracks_artists)
+
+summary(model_3)
+```
+
+Adjusted R- squared values is 0.09998. This implies that the model can predict the track popularity and is able to explain 9.99% of the variation in the data set.
+
+Let's check if these models are adequate. 
+
+```{r}
+par(mfrow = c(1,2))
+# generate QQ plot
+qqnorm(model_3$residuals,main = "Model")
+qqline(model_3$residuals)
+
+# generate Scatter Plot
+plot(model_3$fitted.values,model_2$residuals,pch = 20)
+abline(h = 0,col = "grey") 
+```
+
+From the graphs, we observe that the qq plot is not ideal, and the data in the scatterplot is not evenly distributed.
+
+Therefore, this data set doesn’t completely satisfy the normality, linearity and equal variance assumptions.
+
+# Conclusion
+
+People prefer positive, cheerful songs for dancing. Positive songs tend to be popular and more energetic. To my surprise speechiness has very low predictability on the postiveness of the song. Lower accousticness and higher danceability lead to higher popularity of a song.
+
+#  Future Scope
+
+We can improve the model by applying transformations on the dependent variable and covariants. We will be able to get a better model for prediction analysis
+
+Combining different datasets related to music apart from the Spotify data wil be helpful in better analysis of the song’s popularity.
+
+# References:
+
+- <https://towardsdatascience.com/tagged/spotify>
+- <https://opendatascience.com/a-machine-learning-deep-dive-into-my-spotify-data/>
+- <https://www.reisanar.com/files/poster_Benito_Carr_v5.pdf>

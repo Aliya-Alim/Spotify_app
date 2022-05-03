@@ -1,0 +1,396 @@
+---
+title: "Spotify Analysis"
+author: "Aliya Alimujiang"
+date: "12/1/2020"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      ggplot2::theme_set(ggplot2::theme_bw()))
+```
+
+
+```{r}
+library(tidyverse)
+library(funModeling) 
+library(corrplot)
+library(gridExtra)
+library(grid)
+library(lubridate)
+#install.packages("factoextra")
+#install.packages("broom")
+library(factoextra)
+library(broom)
+library(tree)
+library(fmsb)
+library(radarchart)
+```
+
+
+```{r,message=FALSE}
+tracks <- read_csv("../output/tracks.csv")
+artists <- read_csv("../output/artists.csv")
+
+tracks_artists <- tracks %>%
+  inner_join(artists, by = 'artist_id')
+```
+
+
+
+# Introduction
+
+Spotify is now the global music streaming service leader and also has the highest share of music streaming subscribers in the world, outperforming its competitors by some margin. With a wide variety of music content as well as audiobooks and podcasts, Spotify has established itself as the “go-to” option for many. 
+
+
+In this analysis I will be exploring the tracks and artist data scrapped from spotify. By performing statistical analysis on these dataset, I try to answer a relatively simple questions regarding audio feautures to see if I can find out what are the secret ingredients(audio features) to make a song popular, irrespective of the quality of the song or the talent involved in composing and playing it. This will be done according to the following steps:
+
+- `Exploration of the Data` 
+- `Identify and evaluate interesting patterns`
+- `Perform pair t-test on variables that has interesting pattern`
+- `Regression Model and residual plots to assess model approriateness`
+- `Conclusion`
+
+
+# Exploratory data analysis
+
+
+### Datasets
+
+In tracks dataset we obtained, there are `r nrow(tracks)` track records along with their popularity and its audio features. Such as:
+
+- `Danceability`: Describes how suitable a track is for dancing, 0.0 is least danceable and 1.0 is most danceable.
+- `Energy`: is a measure from 0.0 to 1.0 and represents a perceptual measure of intensity and activity.
+- `Speachiness`: detects the presence of spoken words in a track. Values above 0.66 describe tracks that are probably made entirely of spoken words.
+- `Acousticness`: A confidence measure from 0.0 to 1.0 of whether the track is acoustic
+- `Liveness`:  Higher liveness values represent an increased probability that the track was performed live.
+- `Valence`: A measure from 0.0 to 1.0 describing the musical positiveness conveyed by a track. Tracks with high valence sound more positive (e.g. happy, cheerful, euphoric).
+- `Key`: The estimated overall key of the track. Integers map to pitches using standard Pitch Class notation . E.g. 0 = C, 1 = C♯/D♭, 2 = D, and so on.
+- `Mode`: Indicates the modality (major or minor) of a track, the type of scale from which its melodic content is derived. Major is represented by 1 and minor is 0.
+- `Duration`:The duration of the track in milliseconds- transformed later to seconds
+- `Time Signature`: An estimated overall time signature of a track. The time signature (meter) is a notational convention to specify how many beats are in each bar (or measure).
+- `instrumentalness`:Predicts whether a track contains no vocals. The closer the instrumentalness value is to 1.0, the greater likelihood the track contains no vocal content. Values above 0.5 are intended to represent instrumental tracks, but confidence is higher as the value approaches 1.0. 
+- `loudness`:The overall loudness of a track in decibels (dB). 
+- `tempo`:The overall estimated tempo of a track in beats per minute (BPM). In musical terminology, tempo is the speed or pace of a given piece and derives directly from the average beat duration. 
+
+
+```{r}
+tracks <- tracks%>%
+  mutate(duration_s = dmilliseconds(duration_ms))%>%
+  select(track_id:time_signature, duration_s, artist_id, -duration_ms)
+    
+    
+tracks %>% 
+  select(-track_id, -track_name, -release_year, -artist_id) %>%
+  summary()
+```
+
+
+
+Based on this summary, on average, each song lasts for approximately 4 minutes . Track popularity has an average at 47 and artist popularity has an average around around 60. Rest of the features in the dataset is measured from 0 - 1 mostly as explained earlier. Also, noted that difference between mean and median of instrumentalness is quite large. This could be due to skewness.
+
+
+There are `r nrow(artists)` artists in the artists dataset we obtained:
+
+- `artist_id`: An unique identifier for each artist.
+- `artist_name`: Name of each artist.
+- `artist_popularity`: The popularity of each artist. The value ranges from 0 to 100, with 100 being the most popular.
+- `total_followers`: Total followers on Spotify of each artist.
+- `artist_genre`: The genre of each artist.
+
+```{r}
+artists %>%
+  select(-artist_id, -artist_name, -artist_genre) %>%
+  summary()
+
+```
+
+
+
+Based on the summary statistics above, on average, each song lasts for approximately 4 minutes. On average, an artist has approximately 1.08m followers in this dataset. Track popularity has an average at 47 and artist popularity has an average around around 60. Based on their medians and means, both types of popularity distributions are somewhat normal.
+
+
+
+### Initial Exploration 
+
+I created the correlation plot with 2 intentions: 
+
+1. See if there are any relationships between variables
+
+2. To find any obvious correlations to identify focus area
+
+```{r corr plot}
+track_corr <- tracks %>%
+  select(track_popularity,
+         danceability:duration_s) %>%
+  cor()
+
+corrplot(track_corr, method="color", type = "upper", tl.col="black",tl.srt=40, addCoef.col = "gray8", diag = T, number.cex = 0.65)
+```
+
+
+
+There is no strong correlation between any of the track audio features and the track popularity, which is good. But, there are some variables with a very strong correlation with each other, indicating that this dataset has multicollinearity and might not be suitable for various statistical models.
+
+  - There is a high positive correlation between `energy` and `loudness` of a track.
+  - There is a strong negative correlation between `energy` and `acousticness` in a track.
+  - There is a positive correlation between `danceability` and `valence.`
+
+
+
+
+I also looked at the data distributions of audio feautures: 
+
+
+```{r}
+spotify_hist <- tracks[,-c(1,2,3,4,8,15,18)]
+plot_num(spotify_hist)
+```
+
+
+
+From the histograms, we can observe that:
+
+- Majority  observations have a value no larger than 0.1 in instrumentalness, and this is the reason why the difference between mean and median of instrumentalness is quite large that we noticed earlier in the summary. 
+
+- Danceability, Valence and tempo are almost normally distributed.
+
+- Majority tracks have speechiness index less than 0.2 indicating that less speechy songs are more favoured by listeners.  
+
+
+
+
+Let’s take a look at the distributions of the track popularity and the artist popularity:
+
+Both artist and track popularities have somewhat normal distribution.
+
+```{r}
+tracks %>%
+  ggplot() +
+  geom_histogram(aes(x = track_popularity), fill = 'pink', color = 'grey') +
+  labs(title = 'Track Popularity Histogram', x = 'Track Popularity') -> tracks1
+```
+
+
+```{r}
+artists %>%
+  ggplot() +
+  geom_histogram(aes(x = artist_popularity), fill = 'pink', color = 'grey') +
+  labs(title = 'Artist Popularity Histogram', x = 'Artist Popularity') ->artists1
+
+grid.arrange(tracks1,artists1, nrow=1)
+```
+
+
+
+Let's take a closer look at variable `Key`: 
+
+Key signatures are a musical notation that indicates which notes are sharp or flat in a piece of music.Choosing the best musical key for a song is essential. Nearly every song is written in a specific key. The key will define the makeup of the song and give us certain information about that song. For example, a song’s key determines which notes accommodate a singer’s vocal range and sweet spot. It’s essential to know the highest and lowest notes a singer can reach. It ensures the melody and harmony notes match the singer’s voice. 
+
+The playability of an instrument can play a factor in which key a song writer chooses as well. Many musicians prefer a key that’s easier to play on a particular instrument. For example:
+
+ - Piano playability: A song in the key of C# may be difficult to play on a keyboard because of all the black keys. Instead, we could transpose the song down a semi-tone to C minor, which will make it easier on hands.
+ 
+
+
+If we look at the distribution below we can easily see that the C key is the most common key followed by G. We can conclude that the most singers vocal range and the instrument was used to play the music is suitable for key C and G. 
+
+
+```{r key distribution}
+tracks$key <- as.character(tracks$key)
+library(plyr)
+tracks$key <- revalue(tracks$key, c("0" = "C", "1" = "C♯,D♭", "2" = "D", "3" = "D♯,E♭", "4" = "E", "5" =  "F", "6" = "F♯,G♭","7" = "G","8" = "G♯,A♭","9" = "A","10" = "A♯,B♭","11" = "B"))
+
+detach("package:plyr", unload=TRUE) 
+song_keys <- tracks %>%
+  group_by(key) %>%
+  summarise(n_key = n()) %>%
+  arrange(desc(n_key))
+
+library(plyr)
+song_keys$key <- factor(song_keys$key, levels = song_keys$key[order(song_keys$n_key)]) # in order to visualise the keys in descending order
+detach('package:plyr', unload = TRUE)
+
+ggplot(song_keys, aes(x = reorder(key,-n_key), y = n_key, fill = reorder(key,-n_key))) +
+  geom_bar(stat = "identity") +
+  labs(title = "Distribution of the Keys of Top Songs", x = "Keys", y = "Count of Keys on the Top 100") +
+  geom_text(aes(label=n_key), position = position_stack(vjust = 0.8)) +
+  theme_bw() +
+  theme(plot.title = element_text(size=15,face = "bold"), axis.title = element_text(size=12)) +
+  theme(legend.position="none")
+```
+
+
+
+
+
+
+Finally, lets look at the all audio feautures by genre: 
+
+```{r}
+radar_genres <- c('hip-hop', 'r-n-b', 'classical', 'folk', 'acoustic', 'reggae', 'rock-n-roll', 'electronic', 'blues', 'jazz', 'k-pop', 'house')
+
+genre_radar_df <- tracks_artists[tracks_artists$artist_genre %in% radar_genres, ] %>%
+  arrange(desc(artist_popularity)) %>%
+  group_by(artist_genre) %>%
+  summarise(artist_popularity = mean(artist_popularity),
+            danceability = mean(danceability),
+            energy = mean(energy),
+            loudness = mean(loudness),
+            speechiness = mean(speechiness),
+            acousticness = mean(acousticness),
+            instrumentalness = mean(instrumentalness),
+            liveness = mean(liveness),
+            valence = mean(valence),
+            duration_ms = mean(duration_ms))
+
+# Normalize radar plot data
+genre_radar_df_norm <- cbind(genre_radar_df[,1], apply(genre_radar_df[,-1], 2, function(x){(x-min(x)) / diff(range(x))}))
+
+# Mutate radar data
+genre_radar_final <- gather(genre_radar_df_norm, key=Attribute, value=Score, -artist_genre) %>%
+  spread(key=artist_genre, value=Score)
+
+# PLOT RADAR PLOT
+chartJSRadar(scores = genre_radar_final,
+             scaleStartValue = -1,
+             maxScale =1,
+             showToolTipLabel = TRUE)
+
+```
+
+
+
+As expected: 
+
+ - classical music has the highest accousticness and longest duration.
+
+ - Hip-hop has the highest speechiness, highest artist popularity as well as the highest danceability.
+ 
+ - K-pop is the loudest and has the highest energy. 
+ 
+ - Rock-n-roll has the highest liveness and valence.
+ 
+ 
+ 
+
+### Differences in tempo between songs in major and minor keys -- `Mode`:
+
+- `Mode` is the musical scale. A scale identifies which notes to use for the melodies and harmonies. There are several types of scales, each derived from the twelve available notes. However, the two main types are the major scale and the minor scale. In our dataset, major is represented by 1 and minor is 0. 
+
+- `tempo`:The overall estimated tempo of a track in beats per minute (BPM). In musical terminology, tempo is the speed or pace of a given piece and derives directly from the average beat duration. 
+
+- `Mode` and `tempo` together can determine the emotional impact of the song. For example, many perceive major scales with faster tempo as bright, uplifting, and happy sounding. Whereas minor scales with slower tempo seem dark, depressing, and sad sounding.
+
+
+Below, I will test if there is a difference in the distribution of tempo between songs in a major key and songs in a minor key.
+
+
+Let’s look at the histogram:
+
+Both distribution looks normal with larger peak around 130 and smaller peak at 80. 
+
+
+
+```{r}
+
+library(dplyr)
+tracks%>%
+  mutate(mode = as.factor(mode))%>%
+   mutate(mode = fct_recode(mode, "Major" = "1.0","Minor" = "0.0")) ->tracks
+
+ggplot(data = tracks, mapping = aes(x = tempo)) +
+    geom_histogram(aes(fill = mode)) +
+    facet_wrap(~ mode)
+```
+
+Both distribution looks normal with larger peak around 130 and smaller peak at 80. 
+
+
+We can also look at the overlapping density plot for easier visual:
+
+```{r}
+ggplot(data = tracks, mapping = aes(x = tempo)) +
+    geom_density(aes(col = mode))
+```
+
+Two distributions are very similar. 
+
+
+
+
+```{r,eval=FALSE}
+
+# Let’s compute the mean tempo for each of the modes:
+tracks %>% 
+  group_by(mode) %>%
+  summarise(mean_tempo = mean(tempo))
+```
+
+
+Lets test if the difference in mean is significant or not with the t-test:
+```{r}
+major_data <- (tracks %>% filter(mode == "1"))$tempo
+minor_data <- (tracks %>% filter(mode == "0"))$tempo
+t.test(major_data, minor_data, alternative = "two.sided")
+```
+
+
+The p-value for this test is around 0.7479, so we would failed to reject the null hypothesis in favor of the alternative hypothesis. In another words, we dont have enough evidence to support that there is a difference between Major and Minor Key in top 100 popular songs. 
+
+
+***
+# Linear Regression
+
+Linear Regression with all audio features: 
+
+```{r}
+fit <- lm(track_popularity ~ acousticness + danceability + energy + instrumentalness + loudness + liveness + valence + mode + key + speechiness + tempo + duration_ms + time_signature, data=tracks_artists)
+
+summary(fit)
+```
+
+All variables except for some key factor variables have been found significant in the model. Adjusted R squared is really low aprroximately at 10% suggesting that there are variance in the model. Checking residual plot as we estimate the variance by the variability in the residual:
+
+```{r}
+par(mfrow = c(2,2))
+plot(fit)
+```
+
+1st plot : Residuals Vs. Fitted -  The red curve trace the pattern of how the residuals are moving, and we see a clear trend of some sort of quadratic function here. So, it indicates that there is non linearity in the data.
+
+
+2n plot: QQplot: this checks if the residuals follow a normal distribution or not.  We see the data mostly follows the normal distribution line and we also see that the bottom left portion as well as some of the top right kind of deviates away from the normal line but overall its not so bad. 
+
+3rd plot: Scale location plot: this is where we test for homoscedasticity – the horizontal red line represents the ideal case and it indicated the residuals have uniform case across the range. We can see that the variances are increasing with x. Hetereoscedasticity present in the data!
+
+4th plot: Residual VS leverage -  cooks distance is a pretty good measure of an influence of an observation  and we use this to check for outliers and high leverage points. We can easily spot the both high leverage and the outliers in the plot . 
+
+
+In conclusion, linear regression Model was not appropriate to predict the track popularity as there is no linear strong linear relationship between audio features and track popularity.  In order to get better predictions we need to explore other non linear prediction models. 
+
+
+
+# Conclusion
+
+Taste in popular music changes overtime which is why it is hard to build one model for the steady data to predict the future trends. However, understanding these trends as well as how it is consumed will help streaming services like Spotify to get to know their subscribers better, hence, provide better service!
+
+
+
+#  References
+[1] Tempo Classification, https://en.wikipedia.org/wiki/Tempo 
+
+[2] Key Signature Chart,https://www.piano-keyboard-guide.com/key-signatures.html
+
+[3]https://www.statista.com/topics/2075/spotify/
+
+[4] Data
+- <https://developer.spotify.com/documentation/web-api/reference/tracks/get-track/>
+- <https://developer.spotify.com/documentation/web-api/reference/tracks/get-audio-features/>
+- <https://developer.spotify.com/documentation/web-api/reference/artists/get-artist/>
+
+
+

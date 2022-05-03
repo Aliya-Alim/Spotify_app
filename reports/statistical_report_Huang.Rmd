@@ -1,0 +1,314 @@
+---
+title: "Spotify Data Analysis Report"
+author: "Rui Huang"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE )
+```
+
+```{r packages, echo = FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(corrplot)
+library(gridExtra)
+library(grid)
+library(radarchart)
+library(broom)
+```
+
+
+```{r data}
+tracks <- read.csv('/Users/ruihuang/Documents/fall2020/stat613/final-project-ds-g/output/tracks.csv')
+artists <- read.csv('/Users/ruihuang/Documents/fall2020/stat613/final-project-ds-g/output/artists.csv')
+tracks_artists <- tracks %>%
+  inner_join(artists, by = 'artist_id')
+tracks <- tracks %>%
+  mutate(duration_s = dmilliseconds(duration_ms))
+```
+
+
+# Introduction
+Music is an expressive language that brings people together. It has the ability to evoke powerful emotional responses, such as chills and thrills in listeners. Spotify is a music platform that have over 500 million songs available. For each song on their platform, they have 13 audio features defined by their internal algorithms. Spotify also assigns popularity score to each song as well as to each artist, also defined by their internal algorithms. Given this information available, this report will take a closer look at the those features of tracks and artists and discover potential patterns that differentiate different artists and tracks regarding their popularity.
+
+# Exploratory Data Analysis
+Before diving into the analysis, we are going to take a glimpse at summary statistics and the distributions of the features for tracks and artists.
+
+Let's start with the tracks. Below is the summary statistics for the tracks data:
+
+```{r tracks summary}
+tracks %>%
+  select(-track_id, -track_name, -release_year, -mode, -key, -time_signature, -artist_id, -duration_ms) %>%
+  summary()
+```
+
+From above, on average, a track has the track popularity of around 50 and each track lasts for about 4 minutes. Most of features look quite normal based on the difference between their median and mean values. Let's conduct a correlation analysis.
+
+```{r corrplot}
+track_corr <- tracks %>%
+  select(-track_id, -track_name, -release_year, -mode, -key, -time_signature, -artist_id, -duration_ms) %>%
+  cor()
+
+corrplot(track_corr, method="color", type = "upper", tl.col="black",tl.srt=40, addCoef.col = "gray8", diag = T, number.cex = 0.65)
+```
+
+Based on the correlation above, there is high negative correlation of -0.73 between energy and acousticness. This tells us that the more energetic a song is, the less acoustic a song is. There is also high correlation between danceability and valence, meaning that when a song tends to make a listen feel cheerful and positive, the listener would tend to dance when listening to this song. Not surprisingly, there is also high positive correlation between a song's energy and loudness. In addition, there is also strong negative correlation between a song's loudness and acousticness. There is no strong correlation between any of the audio features and track popularity, telling us that in order for a track to be popular, various factors are involved instead of a single audio feature. However, there is a slight negative correlation of-0.26 between track popularity and instrumentalness. Let's take a look at the 
+
+```{r}
+tracks$key <- as.character(tracks$key)
+library(plyr)
+tracks$key <- revalue(tracks$key, c("0" = "C", "1" = "C♯,D♭", "2" = "D", "3" = "D♯,E♭", "4" = "E", "5" =  "F", "6" = "F♯,G♭","7" = "G","8" = "G♯,A♭","9" = "A","10" = "A♯,B♭","11" = "B"))
+
+detach("package:plyr", unload=TRUE) 
+song_keys <- tracks %>%
+  group_by(key) %>%
+  summarise(n_key = n()) %>%
+  arrange(desc(n_key))
+
+library(plyr)
+song_keys$key <- factor(song_keys$key, levels = song_keys$key[order(song_keys$n_key)]) # in order to visualise the keys in descending order
+
+ggplot(song_keys, aes(x = reorder(key,-n_key), y = n_key, fill = reorder(key,-n_key))) +
+  geom_bar(stat = "identity") +
+  labs(title = "Distribution of the Keys of Top Songs", x = "Keys", y = "Count of Keys on the Top 100") +
+  geom_text(aes(label=n_key), position = position_stack(vjust = 0.8)) +
+  theme_bw() +
+  theme(plot.title = element_text(size=15,face = "bold"), axis.title = element_text(size=12)) +
+  theme(legend.position="none")
+
+detach("package:plyr", unload=TRUE) 
+```
+
+We see that the most popular key is C, followed by G.
+Throughout years, people's music tastes have been changing. But how constantly? Let's take a look. The graphs below shows the distributions of some audio features per year in the last decade.
+
+```{r instrumentalness}
+tracks %>%
+  filter(release_year >= 2010) %>%
+  ggplot() +
+  geom_boxplot(aes(x = as.factor(release_year), y = danceability, group = as.factor(release_year), color = as.factor(release_year))) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+            text = element_text(size = 12)) +
+  theme(legend.title=element_blank()) +
+  labs(x = 'Year')
+
+tracks %>%
+  filter(release_year >= 2010) %>%
+  ggplot() +
+  geom_boxplot(aes(x = as.factor(release_year), y = instrumentalness, group = as.factor(release_year), color = as.factor(release_year))) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+            text = element_text(size = 12)) +
+  theme(legend.title=element_blank()) +
+  labs(x = 'Year')
+
+tracks %>%
+  filter(release_year >= 2010) %>%
+  ggplot() +
+  geom_boxplot(aes(x = as.factor(release_year), y = speechiness, group = as.factor(release_year), color = as.factor(release_year))) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+            text = element_text(size = 12)) +
+  theme(legend.title=element_blank()) +
+  labs(x = 'Year')
+
+tracks %>%
+  filter(release_year >= 2010) %>%
+  ggplot() +
+  geom_boxplot(aes(x = as.factor(release_year), y = valence, group = as.factor(release_year), color = as.factor(release_year))) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+            text = element_text(size = 12)) +
+  theme(legend.title=element_blank()) +
+  labs(x = 'Year')
+
+tracks %>%
+  filter(release_year >= 2010) %>%
+  ggplot() +
+  geom_boxplot(aes(x = as.factor(release_year), y = liveness, group = as.factor(release_year), color = as.factor(release_year))) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+            text = element_text(size = 12)) +
+  theme(legend.title=element_blank()) +
+  labs(x = 'Year')
+
+tracks %>%
+  filter(release_year >= 2010) %>%
+  ggplot() +
+  geom_boxplot(aes(x = as.factor(release_year), y = energy, group = as.factor(release_year), color = as.factor(release_year))) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, face = "bold"),
+            text = element_text(size = 12)) +
+  theme(legend.title=element_blank()) +
+  labs(x = 'Year')
+```
+
+Based on the box plots above, across years, audio features have not changed significantly in the last decade. Yet out of all, danceability changes the most over time.
+
+Now, let's take a look at the patterns of audio features per genre through a radar plot:
+
+```{r radar plot}
+# Prepare data for artist radar plot
+radar_genres <- c('hip-hop', 'r-n-b', 'classical', 'folk', 'reggae', 'electronic', 'blues', 'jazz', 'house', 'pop')
+
+genre_radar_df <- tracks_artists[tracks_artists$artist_genre %in% radar_genres, ] %>%
+ arrange(desc(artist_popularity)) %>%
+ group_by(artist_genre) %>%
+ summarise(artist_popularity = mean(artist_popularity),
+           danceability = mean(danceability),
+           energy = mean(energy),
+           loudness = mean(loudness),
+           speechiness = mean(speechiness),
+           acousticness = mean(acousticness),
+           instrumentalness = mean(instrumentalness),
+           liveness = mean(liveness),
+           valence = mean(valence),
+           duration_ms = mean(duration_ms))
+
+# Normalize radar plot data
+genre_radar_df_norm <- cbind(genre_radar_df[,1], apply(genre_radar_df[,-1], 2, function(x){(x-min(x)) / diff(range(x))}))
+
+# Mutate radar data
+genre_radar_final <- gather(genre_radar_df_norm, key=Attribute, value=Score, -artist_genre) %>%
+ spread(key=artist_genre, value=Score)
+
+# PLOT RADAR PLOT
+chartJSRadar(scores = genre_radar_final,
+            scaleStartValue = -1,
+            maxScale =1,
+            showToolTipLabel = TRUE)
+```
+
+Based on this radar graph, we see classical music has high instrumentalness and high acousticness and it has the longest duration in a track on average, which is not surprising. Classical music also has very low loudness and speechiness. Electronic music has the highest energy. R&B music has the highest valence, meaning that R&B music tends to make the listeners feel cheerful and happy. Regarding the speechiness, hip-hop music has the an oustandingly high score while other genres share similar levels of speechiness. This could be explained by the fact that the core of hip-hop genre is rap songs, of which the essential value is lyrics. Hip-hop also has the highest danceability, followed closely by house music. Pop music seems to be more popular than hip-hop music.
+
+
+Based on the observations above, I am interested in finding mean difference of artist popularity between Pop genre and Hip-hop genre. I am also interested in whether there is mean difference in danceability among different levels of track popularity.
+
+# Statistical Analyses
+
+- Question 1: Is there significant mean difference in artist popularity between Hip-hop genre and Pop genre?
+
+Let's take a look at the model assumption:
+
+```{r}
+artists %>%
+  filter(artist_genre %in% c('pop', 'hip-hop')) %>%
+  ggplot(aes(x = artist_genre, y = artist_popularity)) +
+  geom_boxplot() +
+  theme_bw()
+```
+
+Artist popularity seems normal based on the boxplots above, so there is no need to log the data. Let's conduct a hypothesis test to find out the mean difference between these two genres:
+
+Null Hypothesis: There is mean difference of artist popularity between Hip-Hop genre and Pop genre. 
+Alternative Hypothesis: There is no significant of artist popularity mean difference between Hip-Hop genre and Pop genre. 
+
+```{r}
+artists %>%
+  filter(artist_genre %in% c('pop', 'hip-hop')) %>%
+  t.test(artist_popularity ~ artist_genre, data = .) %>%
+  tidy() -> tout1
+
+c('p-value' = tout1$p.value, low = tout1$conf.low, high = tout1$conf.high)
+```
+
+Based on the t test result above, p value is less than 0.01, so we do not have enough evidence to accept the null hypothesis. We conclude that there is significant mean difference in artist popularity between hip-hop genre and pop genre. The mean difference is estimated to range from approximately 1.18 to 5.65, with pop genre being more popular.
+
+- Question 2: Does the danceability of a song makes a difference in track popularity?
+
+Let's take a look at the model assumptions:
+
+```{r}
+tracks2 <- tracks %>%
+  mutate(popularity_class = ifelse(track_popularity > 80, 'A-Popularity > 80',
+                                   ifelse(track_popularity > 60, 'B-Popularity > 60',
+                                          ifelse(track_popularity > 40, 'C-Popularity > 40',
+                                                 ifelse(track_popularity > 20, 'D-Popularity > 20',
+                                                        'E-Popularity >= 0')))))
+tracks2 %>%
+  ggplot(aes(x = popularity_class, y = danceability)) +
+  geom_boxplot() +
+  theme_bw()
+```
+
+It seems like the more popular a song is, the higher danceability is there in a song. Let's conduct a hypothesis test:
+
+Null Hypothesis: There is no difference in danceability between a song with popularity over 80 and a song with popularity between 60 and 80.
+Alternative Hypothesis: There is difference in danceability between a song with popularity over 80 and a song with popularity between 60 and 80.
+
+```{r}
+tracks2 %>%
+  filter(popularity_class %in% c('A-Popularity > 80', 'B-Popularity > 60')) %>%
+  t.test(danceability ~ popularity_class, data = .) %>%
+  tidy() -> tout2
+
+c('p-value' = tout2$p.value, low = tout2$conf.low, high = tout2$conf.high)
+```
+
+P value is significantly small, so we do not have enough evidence to accept the null hypothesis. The mean difference of danceability between a song with popularity over 80 and a song with popularity between 60 and 80 ranges from approximately 0.05 to 0.08. This tells us that when a song tends to make a listener want to dance, this song tends to be popular compared to a song with low danceability.
+
+
+- Question 3: Do listeners prefer cheerful music?
+
+Based on the correlation plot at the beginning, there is a positive correlation between danceability and valence. Let's take a look at the behaviors of valence among difference classes of track popularities.
+
+```{r}
+tracks2 %>%
+  ggplot(aes(x = popularity_class, y = valence)) +
+  geom_boxplot() +
+  theme_bw()
+```
+
+We see that A class and B class do not vary much, but the rest of the classes seem to have lower valence. Let's conduct a hypothesis test:
+
+Null Hypothesis: There is no difference in valence between a song with popularity over 80 and a song with popularity between 60 and 80.
+Alternative Hypothesis: There is difference in valence between a song with popularity over 80 and a song with popularity between 60 and 80.
+
+```{r}
+tracks2 %>%
+  filter(popularity_class %in% c('A-Popularity > 80', 'B-Popularity > 60')) %>%
+  t.test(valence ~ popularity_class, data = .) %>%
+  tidy() -> tout3
+
+c('p-value' = tout3$p.value, low = tout3$conf.low, high = tout3$conf.high)
+```
+
+P value is quite high, so we fail to reject the null hypothesis. Let's conduct another hypothesis to analyze the valence between A class and C class of track popularity:
+
+Null Hypothesis: There is no difference in valence between a song with popularity over 80 and a song with popularity between 40 and 60.
+Alternative Hypothesis: There is difference in valence between a song with popularity over 80 and a song with popularity between 40 and 60.
+
+```{r}
+tracks2 %>%
+  filter(popularity_class %in% c('A-Popularity > 80', 'C-Popularity > 40')) %>%
+  t.test(valence ~ popularity_class, data = .) %>%
+  tidy() -> tout4
+
+c('p-value' = tout4$p.value, low = tout4$conf.low, high = tout4$conf.high)
+```
+
+P value is quite small, so we do not have enough evidence to reject the null hypothesis. The mean difference of valence score between these 2 classes ranges approximately from 0.02 to 0.07.
+
+
+# Conclusion
+
+Music trends change over time. While people like different genres of music for different reasons, Hip-hop and Pop are the two leading genres in the current music industry. Both of these genres are likely to make a listener dance, which might be the reason why they bring people's interest together. In addition, more popular songs seem to convey relatively higher cheerfulness to a listener.
+
+
+# References
+- https://www.businessofapps.com/data/spotify-statistics/#:~:text=Spotify%20currently%20lists%20over%2050,the%20largest%20music%20library%20available.
+- https://www.statista.com/statistics/310746/share-music-album-sales-us-genre/#:~:text=In%202018%2C%20hip%2Dhop%20and,U.S.%20in%202018%20was%20jazz.
+
+
+
+
+
+
+
+
+
+
